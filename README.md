@@ -68,7 +68,7 @@ Commands in the dialog should be escaped with `--`. There are only two available
 # Port to listen to
 # Other users should specify this port number
 # when dialing
-port="1337"
+port=1337
 
 # Path the directory with .png images
 # If --secret command is invoked without --path argument,

@@ -18,7 +18,7 @@ pub struct Config {
     /// 
     /// It should be converted to a numerical value
     /// before starting the main loop.
-    pub port: String,
+    pub port: u16,
     
     /// Path the directory with .png images
     /// 
@@ -45,7 +45,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            port: "1337".to_owned(),
+            port: 1337,
             assets: "~/.simi/assets".to_owned(),
             delete_images: false,
             pick_randomly: true,
