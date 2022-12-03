@@ -14,7 +14,7 @@ toolchain installed, and then type
 ## Usage
 simi runs in interactive mode only. Type `simi` in your terminal to run it. Below is an example of a typical session:
 
-```sh
+```
 sh-5.1$ simi
 <simi>: Welcome. Type help to display available commands
 [you]: add Saul 192.168.0.12:1337
