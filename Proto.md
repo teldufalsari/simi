@@ -18,7 +18,7 @@ Each protocol message consists of a mandatory `type` field and an optional argum
 
 struct Message {
     typ: Type,
-    data: Option<[u8; _]>,
+    data: Option<Vec<u8>>,
 }
 
 enum Type {
