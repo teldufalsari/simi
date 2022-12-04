@@ -44,7 +44,8 @@ pub fn idle_loop(config: Config) -> Result<(), Error> {
         }
         if watches[1].revents().unwrap_or(PollFlags::empty()).contains(PollFlags::POLLIN) {
             // TCP connection recieved, decline it
-            let connection = listener.accept().expect("French inquisition");
+            let connection = listener.accept()
+                .map_err(|e| Error::new(ErrCode::Fatal, e.to_string()))?;
             prompt(&format!("incoming connection from {} - declining", connection.1));
             decline(connection.0);
         }
