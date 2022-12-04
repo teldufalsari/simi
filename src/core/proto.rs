@@ -8,7 +8,7 @@ pub const HEADER_LEN: usize = 8;
 pub const MSG_LIMIT: u64 = 1024 * 1024 * 16; // 16 MiB
 
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum Type {
     Request,
     Accept,
@@ -58,7 +58,7 @@ impl Message {
             .map_err(|e| convert_err(e, ErrCode::Serial))
     }
 
-    pub fn deserialize<R: Read>(reader: R) -> Result<Self, Error> {
+    pub fn deserialize<R: Read>(reader: &mut R) -> Result<Self, Error> {
         bincode::DefaultOptions::new()
             .with_little_endian()
             .with_limit(MSG_LIMIT)
