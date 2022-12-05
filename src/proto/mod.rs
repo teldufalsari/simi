@@ -15,6 +15,11 @@ pub fn send(stream: &mut TcpStream, message: Message) -> Result<(), Error> {
     ).map_err(|e| convert_err(e, ErrCode::Network))
 }
 
+/// Read a message from the stream (if any)
+pub fn recieve(stream: &mut TcpStream) -> Result<Message, Error> {
+    Message::deserialize(stream)
+}
+
 /// Performs handshake and return `true` if connection has been established
 /// In future it should return session parameters (key and nonce)
 pub fn handshake_init(stream: &mut TcpStream) -> Result<bool, Error> {

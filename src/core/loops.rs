@@ -9,8 +9,8 @@ use nix::errno::Errno;
 use crate::config::Config;
 use crate::cli::{menu, dialogue, Command};
 use crate::error::{Error, ErrCode, convert_err};
-use crate::proto::message::Message;
-use crate::proto::{send, handshake_init, decline};
+use crate::proto::message::{Message, Type};
+use crate::proto::{send, handshake_init, decline, recieve};
 use super::{prompt, execute};
 
 pub fn idle_loop(config: Config) -> Result<(), Error> {
@@ -21,7 +21,7 @@ pub fn idle_loop(config: Config) -> Result<(), Error> {
 
     // allocate necessary resources
     let listener_fd = listener.as_fd().as_raw_fd();
-    let mut watches = vec![
+    let mut watches = [
         PollFd::new(STDIN_FILENO, PollFlags::POLLIN),
         PollFd::new(listener_fd, PollFlags::POLLIN)
     ];
@@ -41,6 +41,13 @@ pub fn idle_loop(config: Config) -> Result<(), Error> {
             match menu::interpret(buffer.trim()) {
                 Err(e) => prompt(&e.descr),
                 Ok(Command::Exit) => break,
+                Ok(Command::DialIp(addr)) => {
+                    let desired_addr = addr.parse::<SocketAddr>().unwrap();
+                    if let Err(e) = waiting_loop(&config, watches, &listener, desired_addr) {
+                        prompt(&format!("connection was broken because: {}", e.descr));
+                    }
+                    prompt("you are in the menu now");
+                }
                 Ok(cmd) => execute(cmd)?
             }
             buffer.clear();
@@ -73,6 +80,8 @@ fn waiting_loop(
             // otherwise go to the wait loop
             return Ok(());
         }
+    } else {
+        prompt("your peer is offline. Wait until they connect or leave");
     }
     let mut buffer = String::new();
     loop {
@@ -85,7 +94,6 @@ fn waiting_loop(
             // Events in stdio
             // read line, interpret, execute
             stdin().read_line(&mut buffer).unwrap();
-            // TODO: special interpreter for wait loop
             match dialogue::interpret(buffer.trim()) {
                 Err(e) => {
                     prompt(&e.descr);
@@ -127,7 +135,7 @@ fn connected_loop(
     listener: &TcpListener,
     address: SocketAddr,
 ) -> Result<CloseCaused, Error> {
-    let mut buf = String::new();
+    let mut buffer = String::new();
     loop {
         match poll(&mut watches, -1) {
             Ok(0) | Err(Errno::EAGAIN) | Err(Errno::EINTR) => continue,
@@ -135,19 +143,42 @@ fn connected_loop(
             Err(e) => return Err(Error::new(ErrCode::Fatal, e.to_string())),
         };
         if watches[0].revents().unwrap_or(PollFlags::empty()).contains(PollFlags::POLLIN) {
-            // process stdio
+            stdin().read_line(&mut buffer).unwrap();
+            match dialogue::interpret(buffer.trim()) {
+                Err(e) => {
+                    prompt(&e.descr);
+                }
+                Ok(Command::Exit) => return Ok(CloseCaused::Locally),
+                Ok(cmd) => execute(cmd)?
+            }
+            buffer.clear();
         }
         if watches[1].revents().unwrap_or(PollFlags::empty()).contains(PollFlags::POLLIN) {
             // decline incoming tcp request / handle incoming message
-            let connection = listener.accept()
+            let mut connection = listener.accept()
                 .map_err(|e| convert_err(e, ErrCode::Fatal))?;
 
             if connection.1 == address {
-                // print message or return
+                // TODO: separate serialization errors from network errors
+                // Actualy, none of them is fatal; we should just return to the idle loop
+                let msg = recieve(&mut connection.0)?;
+                match msg.t {
+                    Type::Close => return Ok(CloseCaused::ByRemote),
+                    // TODO: display the peer name instead of system
+                    Type::Speak => {
+                        if let Some(data) = msg.data {
+                            let text = String::from_utf8(data)
+                                .unwrap_or("<invalid encoding>".to_owned());
+                            prompt(&text);
+                        } else {
+                            prompt("empty message recieved")
+                        }
+                    }
+                    _ => continue,
+                }
             } else {
                 decline(connection.0)
             }
         }
     }
-    
 }
