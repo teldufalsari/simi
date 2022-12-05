@@ -24,6 +24,8 @@ fn execute(cmd: Command) -> Result<(), Error> {
             prompt(&format!("\"Remove\" {} is not implemented", alias)),
         Command::Secret(path) =>
             prompt(&format!("\"Secret\" path={:?} is not implemented", path)),
+        Command::SpeakPlain(str) =>
+            prompt(&format!("You wanted to say \"{}\"", str)),
         Command::Exit => return Ok(())
     }
     Ok(())

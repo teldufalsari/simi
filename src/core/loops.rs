@@ -7,21 +7,23 @@ use nix::poll::{PollFd, PollFlags, poll};
 use nix::errno::Errno;
 
 use crate::config::Config;
-use crate::cli::{interpret, Command};
-use crate::error::{Error, ErrCode};
+use crate::cli::{menu, dialogue, Command};
+use crate::error::{Error, ErrCode, convert_err};
 use crate::proto::message::Message;
 use crate::proto::{send, handshake_init, decline};
 use super::{prompt, execute};
 
 pub fn idle_loop(config: Config) -> Result<(), Error> {
-    // initialize necessary resources
+    // create TCP listener
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));
     let listener = TcpListener::bind(addr)
-        .map_err(|e| Error::new(ErrCode::Fatal, e.to_string()))?;
-    let listener_fd = listener.as_fd();
+        .map_err(|e| convert_err(e, ErrCode::Fatal))?;
+
+    // allocate necessary resources
+    let listener_fd = listener.as_fd().as_raw_fd();
     let mut watches = vec![
         PollFd::new(STDIN_FILENO, PollFlags::POLLIN),
-        PollFd::new(listener_fd.as_raw_fd(), PollFlags::POLLIN)
+        PollFd::new(listener_fd, PollFlags::POLLIN)
     ];
     let mut buffer = String::new();
 
@@ -36,10 +38,8 @@ pub fn idle_loop(config: Config) -> Result<(), Error> {
             // Events in stdio
             // read line, interpret, execute
             stdin().read_line(&mut buffer).unwrap();
-            match interpret(buffer.trim()) {
-                Err(e) => {
-                    prompt(&e.descr);
-                }
+            match menu::interpret(buffer.trim()) {
+                Err(e) => prompt(&e.descr),
                 Ok(Command::Exit) => break,
                 Ok(cmd) => execute(cmd)?
             }
@@ -62,53 +62,63 @@ fn waiting_loop(
     listener: &TcpListener,
     desired_addr: SocketAddr,
 ) -> Result<(), Error> {
+    // First try connecting to the remote peer
     let mut stream = TcpStream::connect(&desired_addr)
         .map_err(|e| Error::new(ErrCode::Network, e.to_string()))?;
     if true == handshake_init(&mut stream)? {
-        let res = connected_loop(config, watches, listener, desired_addr);
-        // check how did we exit from connected_loop
-        // we either return to the idle loop (the user typed "exit") or stay in the wait loop
-        // (our remote peer closed the connection)
-        res
-    } else {
-        let mut buffer = String::new();
-        loop {
-            match poll(&mut watches, -1) {
-                Ok(0) | Err(Errno::EAGAIN) | Err(Errno::EINTR) => continue,
-                Ok(val) => val,
-                Err(e) => return Err(Error::new(ErrCode::Fatal, e.to_string())),
-            };
-            if watches[0].revents().unwrap_or(PollFlags::empty()).contains(PollFlags::POLLIN) {
-                // Events in stdio
-                // read line, interpret, execute
-                stdin().read_line(&mut buffer).unwrap();
-                // TODO: special interpreter for wait loop
-                match interpret(buffer.trim()) {
-                    Err(e) => {
-                        prompt(&e.descr);
-                    }
-                    Ok(Command::Exit) => break,
-                    Ok(cmd) => execute(cmd)?
+        // On success - wait until this connection is closed
+        let cause = connected_loop(config, watches, listener, desired_addr)?;
+        if cause == CloseCaused::Locally {
+            // if it was closed by the local user - return to the idle loop,
+            // otherwise go to the wait loop
+            return Ok(());
+        }
+    }
+    let mut buffer = String::new();
+    loop {
+        match poll(&mut watches, -1) {
+            Ok(0) | Err(Errno::EAGAIN) | Err(Errno::EINTR) => continue,
+            Ok(val) => val,
+            Err(e) => return Err(Error::new(ErrCode::Fatal, e.to_string())),
+        };
+        if watches[0].revents().unwrap_or(PollFlags::empty()).contains(PollFlags::POLLIN) {
+            // Events in stdio
+            // read line, interpret, execute
+            stdin().read_line(&mut buffer).unwrap();
+            // TODO: special interpreter for wait loop
+            match dialogue::interpret(buffer.trim()) {
+                Err(e) => {
+                    prompt(&e.descr);
                 }
-                buffer.clear();
+                Ok(Command::Exit) => break,
+                Ok(cmd) => execute(cmd)?
             }
-            if watches[1].revents().unwrap_or(PollFlags::empty()).contains(PollFlags::POLLIN) {
-                // TCP connection recieved, decide on it
-                let connection = listener.accept()
-                    .map_err(|e| Error::new(ErrCode::Fatal, e.to_string()))?;
-                if connection.1 == desired_addr {
-                    prompt(&format!("incoming connection from {} - accepting", connection.1));
-                    send(&mut stream, Message::new_accept())?;
-                    let res = connected_loop(config, watches, listener, desired_addr);
-                    return res;
-                } else {
-                    prompt(&format!("incoming connection from {} - declining", connection.1));
-                    decline(connection.0);
+            buffer.clear();
+        }
+        if watches[1].revents().unwrap_or(PollFlags::empty()).contains(PollFlags::POLLIN) {
+            // TCP connection recieved, decide on it
+            let connection = listener.accept()
+                .map_err(|e| convert_err(e, ErrCode::Fatal))?;
+            if connection.1 == desired_addr {
+                prompt(&format!("incoming connection from {} - accepting", connection.1));
+                send(&mut stream, Message::new_accept())?;
+                let cause = connected_loop(config, watches, listener, desired_addr)?;
+                if cause == CloseCaused::Locally {
+                    return Ok(());
                 }
+            } else {
+                prompt(&format!("incoming connection from {} - declining", connection.1));
+                decline(connection.0);
             }
         }
-        Ok(())
     }
+    Ok(())
+}
+
+#[derive(PartialEq)]
+enum CloseCaused {
+    ByRemote,
+    Locally,
 }
 
 fn connected_loop(
@@ -116,7 +126,7 @@ fn connected_loop(
     mut watches: [PollFd; 2],
     listener: &TcpListener,
     address: SocketAddr,
-) -> Result<(), Error> {
+) -> Result<CloseCaused, Error> {
     let mut buf = String::new();
     loop {
         match poll(&mut watches, -1) {
@@ -129,6 +139,14 @@ fn connected_loop(
         }
         if watches[1].revents().unwrap_or(PollFlags::empty()).contains(PollFlags::POLLIN) {
             // decline incoming tcp request / handle incoming message
+            let connection = listener.accept()
+                .map_err(|e| convert_err(e, ErrCode::Fatal))?;
+
+            if connection.1 == address {
+                // print message or return
+            } else {
+                decline(connection.0)
+            }
         }
     }
     

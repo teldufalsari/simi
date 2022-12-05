@@ -2,17 +2,7 @@ use std::str::Split;
 use std::net::SocketAddr;
 
 use crate::error::{ErrCode, Error};
-
-#[derive(Debug)]
-pub enum Command {
-    Exit,
-    List,
-    Add(String, String),
-    Remove(String),
-    DialIp(String),
-    DialAlias(String),
-    Secret(Option<String>),
-}
+use super::Command;
 
 /// Takes *trimmed* string and tries to interpret it as a command with arguments
 pub fn interpret(line: &str) -> Result<Command, Error> {
@@ -25,7 +15,6 @@ pub fn interpret(line: &str) -> Result<Command, Error> {
         Some("add") => add(args),
         Some("remove") => remove(args),
         Some("dial") => dial(args),
-        Some("secret") => secret(args),
         Some(cmd) => Err(Error::new(ErrCode::UnknownCommand, format!("unknown command \"{}\"", cmd))),
         None => Err(Error::new(ErrCode::EmptyLine, String::new()))
     }
@@ -75,26 +64,4 @@ fn dial(args: Split<&str>) -> Result<Command, Error> {
     } else {
         Ok(Command::DialAlias(args[0].to_owned()))
     }
-}
-
-// Temporary function implementation
-// Use clap crate for multiple arguments, if there are going to be any
-fn secret(args: Split<&str>) -> Result<Command, Error> {
-    let args = args.collect::<Vec<_>>();
-    if args.len() > 1 {
-        return Err(Error::new(ErrCode::WrongArgs, "usage: --secret [--path=/path/to/file]".to_owned()));
-    }
-    if args.len() == 0 {
-        return Ok(Command::Secret(None));
-    }
-    let mut arg = args[0].split("=");
-    let key = arg.next().unwrap();
-    if key != "--path" {
-        return Err(Error::new(ErrCode::WrongArgs, format!("unknown argument \"{}\"", key)));
-    }
-    let path = match arg.next() {
-        None => {return Err(Error::new(ErrCode::WrongArgs, "usage: --path=/path/to/file.png".to_owned()));}
-        Some(val) => val.to_owned()
-    };
-    Ok(Command::Secret(Some(path)))
 }
