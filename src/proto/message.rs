@@ -27,38 +27,39 @@ pub enum Type {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Message {
     pub t: Type,
+    pub port: u16,
     pub data: Option<Vec<u8>>,
 }
 
 impl Message {
     /// Creates an empty request message
-    pub fn new_request() -> Self {
-        Self { t: Type::Request, data: None }
+    pub fn new_request(port: u16) -> Self {
+        Self { t: Type::Request, port, data: None }
     }
 
     /// Creates an empty request message
-    pub fn new_accept() -> Self {
-        Self { t: Type::Accept, data: None }
+    pub fn new_accept(port: u16) -> Self {
+        Self { t: Type::Accept, port, data: None }
     }
 
     /// Creates an empty request message
-    pub fn new_deny() -> Self {
-        Self { t: Type::Deny, data: None }
+    pub fn new_deny(port: u16) -> Self {
+        Self { t: Type::Deny, port, data: None }
     }
 
     /// Creates an empty request message
-    pub fn new_confirm() -> Self {
-        Self {t: Type::Confirm, data: None}
+    pub fn new_confirm(port: u16) -> Self {
+        Self {t: Type::Confirm, port, data: None}
     }
 
     /// Creates an empty request message
-    pub fn new_speak_plain(payload: Vec<u8>) -> Self {
-        Self { t: Type::SpeakPlain, data: Some(payload) }
+    pub fn new_speak_plain(port: u16, payload: Vec<u8>) -> Self {
+        Self { t: Type::SpeakPlain, port, data: Some(payload) }
     }
 
     /// Creates an empty request message
-    pub fn new_close() -> Self {
-        Self {t: Type::Close, data: None}
+    pub fn new_close(port: u16) -> Self {
+        Self {t: Type::Close, port, data: None}
     }
 
     /// Serializes the message so that it can be sent.

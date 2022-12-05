@@ -5,9 +5,14 @@ use crate::error::Error;
 
 pub mod loops;
 
-
-fn prompt(str: &str) {
+/// don't forget to make this fn private
+pub fn prompt(str: &str) {
     print!("\r<simi>: {}\n[you]: ", str);
+    stdout().flush().unwrap();
+}
+
+pub fn empty_prompt() {
+    print!("[you]: ");
     stdout().flush().unwrap();
 }
 

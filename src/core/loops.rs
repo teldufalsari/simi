@@ -9,9 +9,9 @@ use nix::errno::Errno;
 use crate::config::Config;
 use crate::cli::{menu, dialogue, Command};
 use crate::error::{Error, ErrCode, convert_err};
-use crate::proto::message::{Message, Type};
-use crate::proto::{send, handshake_init, decline, recieve};
-use super::{prompt, execute};
+use crate::proto::message::{Type, Message};
+use crate::proto::{handshake_init, decline, recieve, accept_or_decline, send};
+use super::{prompt, empty_prompt, execute};
 
 pub fn idle_loop(config: Config) -> Result<(), Error> {
     // create TCP listener
@@ -57,7 +57,7 @@ pub fn idle_loop(config: Config) -> Result<(), Error> {
             let connection = listener.accept()
                 .map_err(|e| Error::new(ErrCode::Fatal, e.to_string()))?;
             prompt(&format!("incoming connection from {} - declining", connection.1));
-            decline(connection.0);
+            decline(connection.0, config.port);
         }
     }
     Ok(())
@@ -72,7 +72,7 @@ fn waiting_loop(
     // First try connecting to the remote peer
     let mut stream = TcpStream::connect(&desired_addr)
         .map_err(|e| Error::new(ErrCode::Network, e.to_string()))?;
-    if true == handshake_init(&mut stream)? {
+    if true == handshake_init(&mut stream, config.port)? {
         // On success - wait until this connection is closed
         let cause = connected_loop(config, watches, listener, desired_addr)?;
         if cause == CloseCaused::Locally {
@@ -107,16 +107,15 @@ fn waiting_loop(
             // TCP connection recieved, decide on it
             let connection = listener.accept()
                 .map_err(|e| convert_err(e, ErrCode::Fatal))?;
-            if connection.1 == desired_addr {
-                prompt(&format!("incoming connection from {} - accepting", connection.1));
-                send(&mut stream, Message::new_accept())?;
-                let cause = connected_loop(config, watches, listener, desired_addr)?;
-                if cause == CloseCaused::Locally {
-                    return Ok(());
+            match accept_or_decline(connection, config.port, &desired_addr) {
+                Ok(true) => {
+                    let cause = connected_loop(config, watches, listener, desired_addr)?;
+                    if cause == CloseCaused::Locally {
+                        return Ok(());
+                    }
                 }
-            } else {
-                prompt(&format!("incoming connection from {} - declining", connection.1));
-                decline(connection.0);
+                Ok(false) => continue,
+                Err(e) => return Err(e),
             }
         }
     }
@@ -135,6 +134,7 @@ fn connected_loop(
     listener: &TcpListener,
     address: SocketAddr,
 ) -> Result<CloseCaused, Error> {
+    prompt("connected to the peer");
     let mut buffer = String::new();
     loop {
         match poll(&mut watches, -1) {
@@ -148,7 +148,19 @@ fn connected_loop(
                 Err(e) => {
                     prompt(&e.descr);
                 }
-                Ok(Command::Exit) => return Ok(CloseCaused::Locally),
+                Ok(Command::Exit) => {
+                    let mut stream = TcpStream::connect(address)
+                        .map_err(|e| convert_err(e, ErrCode::Network))?;
+                    send(&mut stream, Message::new_close(config.port))?;
+                    return Ok(CloseCaused::Locally)
+                }
+                Ok(Command::SpeakPlain(text)) => {
+                    let mut stream = TcpStream::connect(address)
+                        .map_err(|e| convert_err(e, ErrCode::Network))?;
+                    //prompt(&format!("Sending \"{}\" to {}", &text, address));
+                    send(&mut stream, Message::new_speak_plain(config.port, text.into_bytes()))?;
+                    empty_prompt();
+                }
                 Ok(cmd) => execute(cmd)?
             }
             buffer.clear();
@@ -157,15 +169,18 @@ fn connected_loop(
             // decline incoming tcp request / handle incoming message
             let mut connection = listener.accept()
                 .map_err(|e| convert_err(e, ErrCode::Fatal))?;
-
-            if connection.1 == address {
                 // TODO: separate serialization errors from network errors
                 // Actualy, none of them is fatal; we should just return to the idle loop
                 let msg = recieve(&mut connection.0)?;
+                if connection.1.ip() == address.ip() && msg.port == address.port() {
+                //prompt(&format!("I recieved [{:?}]", msg));
                 match msg.t {
-                    Type::Close => return Ok(CloseCaused::ByRemote),
+                    Type::Close => {
+                        prompt("your peer disconnected. Wait for them or leave");
+                        return Ok(CloseCaused::ByRemote)
+                    },
                     // TODO: display the peer name instead of system
-                    Type::Speak => {
+                    Type::SpeakPlain => {
                         if let Some(data) = msg.data {
                             let text = String::from_utf8(data)
                                 .unwrap_or("<invalid encoding>".to_owned());
@@ -177,7 +192,7 @@ fn connected_loop(
                     _ => continue,
                 }
             } else {
-                decline(connection.0)
+                decline(connection.0, config.port);
             }
         }
     }
