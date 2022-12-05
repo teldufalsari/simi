@@ -5,9 +5,10 @@ mod cli;
 mod error;
 mod config;
 mod core;
+mod proto;
 
 use crate::config::Config;
-use crate::core::repl::idle_loop;
+use crate::core::loops::idle_loop;
 
 // This is a simple driver for CLI testing
 fn main() {

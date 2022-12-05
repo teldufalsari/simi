@@ -45,6 +45,7 @@ impl Error {
     }
 }
 
+/// Converts any other error to the internal error type
 pub fn convert_err<E: ToString>(e: E, code: ErrCode) -> Error {
     Error::new(code, e.to_string())
 }
