@@ -210,6 +210,13 @@ impl Application {
                     empty_prompt();
                 }
             }
+            Command::Save => {
+                if let Err(e) = self.cfg.save() {
+                    prompt(&format!("cannot save config: {}", e));
+                } else {
+                    empty_prompt();
+                }
+            }
             Command::DialIp(ip) => {
                 let addr = ip.parse::<SocketAddr>().unwrap();
                 self.dial(addr)

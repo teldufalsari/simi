@@ -5,6 +5,7 @@ pub mod dialogue;
 pub enum Command {
     Exit,
     List,
+    Save,
     Add(String, String),
     Remove(String),
     DialIp(String),

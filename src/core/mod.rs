@@ -16,6 +16,7 @@ pub fn empty_prompt() {
     stdout().flush().unwrap();
 }
 
+/// Temporary function
 fn execute(cmd: Command) -> Result<(), Error> {
     match cmd {
         Command::List => prompt("\"List\" is not implemented"),
@@ -31,6 +32,8 @@ fn execute(cmd: Command) -> Result<(), Error> {
             prompt(&format!("\"Secret\" path={:?} is not implemented", path)),
         Command::SpeakPlain(str) =>
             prompt(&format!("You wanted to say \"{}\"", str)),
+        Command::Save =>
+            prompt("Save is not implemented"),
         Command::Exit => return Ok(())
     }
     Ok(())

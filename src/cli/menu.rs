@@ -15,6 +15,7 @@ pub fn interpret(line: &str) -> Result<Command, Error> {
         Some("add") => add(args),
         Some("remove") => remove(args),
         Some("dial") => dial(args),
+        Some("save") => save(args),
         Some(cmd) => Err(Error::new(ErrCode::UnknownCommand, format!("unknown command \"{}\"", cmd))),
         None => Err(Error::new(ErrCode::EmptyLine, String::new()))
     }
@@ -63,5 +64,13 @@ fn dial(args: Split<&str>) -> Result<Command, Error> {
         Ok(Command::DialIp(args[0].to_owned()))
     } else {
         Ok(Command::DialAlias(args[0].to_owned()))
+    }
+}
+
+fn save(mut args: Split<&str>) -> Result<Command, Error> {
+    if args.next().is_some() {
+        Err(Error::new(ErrCode::WrongArgs, "usage: save".to_owned()))
+    } else {
+        Ok(Command::Save)
     }
 }
