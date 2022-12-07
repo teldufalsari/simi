@@ -32,6 +32,8 @@ pub enum ErrCode {
     /// Serialization error
     Serial,
 
+    Filesys,
+
     /// A fatal, unrecoverable error occured.
     /// An application should print error message
     /// and exit

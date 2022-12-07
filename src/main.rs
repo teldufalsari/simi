@@ -24,7 +24,6 @@ fn main() {
             Config::default()
         }
     };
-    println!("<simi>: using following configuration: {:?}", config);
     let mut app = match Application::initialize(config) {
         Ok(val) => val,
         Err(e) => {

@@ -2,7 +2,7 @@ use std::{io::Write, net::SocketAddr};
 use std::net::TcpStream;
 
 use crate::error::{Error, ErrCode, convert_err};
-use crate::core::prompt;
+use crate::core::debug_prompt;
 
 pub mod message;
 use message::{Message, Type};
@@ -24,9 +24,18 @@ pub fn recieve(stream: &mut TcpStream) -> Result<Message, Error> {
 /// Performs handshake and return `true` if connection has been established
 /// In future it should return session parameters (key and nonce)
 pub fn handshake_init(stream: &mut TcpStream, port: u16) -> Result<bool, Error> {
+    debug_prompt("initializing handshake...");
     send(stream, Message::new_request(port))?;
+    debug_prompt("reading response");
     let reply = Message::deserialize(stream)?;
-    Ok(if reply.t == Type::Accept {true} else {false})
+    if reply.t == Type::Accept {
+        debug_prompt("accepted - sending confirmation");
+        send(stream, Message::new_confirm(port))?;
+        Ok(true)
+    } else {
+        debug_prompt("negative response. returning");
+        Ok(false)
+    }
 }
 
 
@@ -54,11 +63,13 @@ pub fn accept_or_decline(
     if let Ok(request) = msg {
         if request.t == Type::Request {
             if request.port == desired.port() {
-                prompt(&format!("incoming connection from {} - accepting", desired));
+                debug_prompt(&format!("incoming connection from {} - accepting", desired));
                 send(&mut connection.0, Message::new_accept(port))?;
-                Ok(true)
+                let response = recieve(&mut connection.0)?;
+                debug_prompt("acception confirmed");
+                Ok(if response.t == Type::Confirm {true} else {false})
             } else {
-                prompt(&format!("incoming connection from {}:{} - declining", connection.1.ip(), request.port));
+                debug_prompt(&format!("incoming connection from {}:{} - declining", connection.1.ip(), request.port));
                 send(&mut connection.0, Message::new_deny(port))?;
                 Ok(false)
             }
