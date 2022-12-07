@@ -1,6 +1,8 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(dead_code)]
 
+use std::process;
+
 mod cli;
 mod error;
 mod config;
@@ -8,9 +10,8 @@ mod core;
 mod proto;
 
 use crate::config::Config;
-use crate::core::loops::idle_loop;
+use crate::core::application::Application;
 
-// This is a simple driver for CLI testing
 fn main() {
     let config = match Config::load() {
         Ok(val) => val,
@@ -23,8 +24,16 @@ fn main() {
         }
     };
     println!("<simi>: using following configuration: {:?}", config);
-    if let Err(e) = idle_loop(config) {
+    let mut app = match Application::initialize(config) {
+        Ok(val) => val,
+        Err(e) => {
+            println!("<simi> Fatal error: {}", e.descr);
+            process::exit(1);
+        }
+    };
+    if let Err(e) = app.run() {
         println!("<simi> Fatal error: {}", e.descr);
+        process::exit(1);
     }
     println!("<simi>: exiting...");
 }

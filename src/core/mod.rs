@@ -3,7 +3,7 @@ use std::io::{stdout, Write};
 use crate::cli::Command;
 use crate::error::Error;
 
-pub mod loops;
+pub mod application;
 
 /// don't forget to make this fn private
 pub fn prompt(str: &str) {
