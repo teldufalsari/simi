@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use std::process;
+use colored::Colorize;
 
 mod cli;
 mod error;
@@ -11,15 +12,15 @@ mod proto;
 
 use crate::config::Config;
 use crate::core::application::Application;
+use crate::core::prompt;
 
 fn main() {
     let config = match Config::load() {
         Ok(val) => val,
         Err(e) => {
-            println!(
-                "<simi>: can't read conf.toml\n
-                <simi>: because: {}\n
-                <simi>: falling back to defaults",e);
+            prompt("can't read conf.toml");
+            prompt(&format!("because: {}", e.red()));
+            prompt(&"falling back to defaults".yellow());
             Config::default()
         }
     };
@@ -27,13 +28,13 @@ fn main() {
     let mut app = match Application::initialize(config) {
         Ok(val) => val,
         Err(e) => {
-            println!("<simi> Fatal error: {}", e.descr);
+            prompt(&format!("<simi> Fatal error: {}", e.descr.red()));
             process::exit(1);
         }
     };
     if let Err(e) = app.run() {
-        println!("<simi> Fatal error: {}", e.descr);
+        prompt(&format!("<simi> Fatal error: {}", e.descr.red()));
         process::exit(1);
     }
-    println!("<simi>: exiting...");
+    println!("{}: exiting...", "<simi>".yellow());
 }
