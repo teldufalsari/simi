@@ -62,7 +62,6 @@ impl Application {
                 // TCP connection recieved, decline it
                 let connection = self.listener.accept()
                     .map_err(|e| Error::new(ErrCode::Fatal, e.to_string()))?;
-                prompt(&format!("incoming connection from {} - declining", connection.1));
                 decline(connection.0, self.cfg.port);
             }
         }
@@ -191,17 +190,24 @@ impl Application {
     fn menu_execute(&mut self, cmd: Command) {
         match cmd {
             Command::List => {
-                for contact in self.cfg.contacts.iter() {
-                    println!("{} : {}", contact.0, contact.1);
+                if self.cfg.contacts.is_empty() {
+                    prompt("empty");
+                } else {
+                    for contact in self.cfg.contacts.iter() {
+                        println!("{} : {}", contact.0, contact.1);
+                    }
+                    empty_prompt();
                 }
-                empty_prompt();
             }
             Command::Add(alias, addr) => {
                 self.cfg.contacts.insert(alias, addr);
+                empty_prompt();
             }
             Command::Remove(alias) => {
                 if let None = self.cfg.contacts.remove(&alias) {
-                    prompt(&format!("Alias {} not found", alias));
+                    prompt(&format!("alias {} not found", alias));
+                } else {
+                    empty_prompt();
                 }
             }
             Command::DialIp(ip) => {
@@ -212,7 +218,7 @@ impl Application {
                 let ip = match self.cfg.contacts.get(&alias) {
                     Some(val) => val,
                     None => {
-                        prompt(&format!("Alias {} not found", alias));
+                        prompt(&format!("alias {} not found", alias));
                         return;
                     }
                 };
