@@ -11,7 +11,7 @@ use crate::cli::{menu, dialogue, Command};
 use crate::error::{Error, ErrCode, convert_err};
 use crate::proto::message::{Type, Message};
 use crate::proto::{handshake_init, decline, recieve, accept_or_decline, send};
-use super::{prompt, empty_prompt, execute};
+use super::{prompt, empty_prompt, execute, named_prompt};
 
 pub struct Application {
     cfg: Config,
@@ -68,13 +68,13 @@ impl Application {
         Ok(())
     }
 
-    fn waiting_loop(&mut self, desired_addr: SocketAddr) -> Result<(), Error> {
+    fn waiting_loop(&mut self, desired_addr: SocketAddr, name: &str) -> Result<(), Error> {
         // First try connecting to the remote peer
         let mut stream = TcpStream::connect(&desired_addr)
             .map_err(|e| Error::new(ErrCode::Network, e.to_string()))?;
         if true == handshake_init(&mut stream, self.cfg.port)? {
             // On success - wait until this connection is closed
-            let cause = self.connected_loop(desired_addr)?;
+            let cause = self.connected_loop(desired_addr, name)?;
             if cause == CloseCaused::Locally {
                 // if it was closed by the local user - return to the idle loop,
                 // otherwise go to the wait loop
@@ -109,7 +109,7 @@ impl Application {
                     .map_err(|e| convert_err(e, ErrCode::Fatal))?;
                 match accept_or_decline(connection, self.cfg.port, &desired_addr) {
                     Ok(true) => {
-                        let cause = self.connected_loop(desired_addr)?;
+                        let cause = self.connected_loop(desired_addr, name)?;
                         if cause == CloseCaused::Locally {
                             return Ok(());
                         }
@@ -122,7 +122,7 @@ impl Application {
         Ok(())
     }
 
-    fn connected_loop(&mut self, address: SocketAddr) -> Result<CloseCaused, Error> {
+    fn connected_loop(&mut self, address: SocketAddr, name: &str) -> Result<CloseCaused, Error> {
         prompt("connected to the peer");
         let mut buffer = String::new();
         loop {
@@ -173,9 +173,9 @@ impl Application {
                             if let Some(data) = msg.data {
                                 let text = String::from_utf8(data)
                                     .unwrap_or("<invalid encoding>".to_owned());
-                                prompt(&text);
+                                named_prompt(name, &text);
                             } else {
-                                prompt("empty message recieved")
+                                named_prompt(name, "<empty message>");
                             }
                         }
                         _ => continue,
@@ -191,35 +191,35 @@ impl Application {
         match cmd {
             Command::List => {
                 if self.cfg.contacts.is_empty() {
-                    prompt("empty");
+                    prompt("empty")
                 } else {
                     for contact in self.cfg.contacts.iter() {
                         println!("{} : {}", contact.0, contact.1);
                     }
-                    empty_prompt();
+                    empty_prompt()
                 }
             }
             Command::Add(alias, addr) => {
                 self.cfg.contacts.insert(alias, addr);
-                empty_prompt();
+                empty_prompt()
             }
             Command::Remove(alias) => {
                 if let None = self.cfg.contacts.remove(&alias) {
-                    prompt(&format!("alias {} not found", alias));
+                    prompt(&format!("alias {} not found", alias))
                 } else {
-                    empty_prompt();
+                    empty_prompt()
                 }
             }
             Command::Save => {
                 if let Err(e) = self.cfg.save() {
-                    prompt(&format!("cannot save config: {}", e));
+                    prompt(&format!("cannot save config: {}", e))
                 } else {
-                    empty_prompt();
+                    empty_prompt()
                 }
             }
             Command::DialIp(ip) => {
                 let addr = ip.parse::<SocketAddr>().unwrap();
-                self.dial(addr)
+                self.dial(addr, &ip)
             }
             Command::DialAlias(alias) => {
                 let ip = match self.cfg.contacts.get(&alias) {
@@ -230,14 +230,14 @@ impl Application {
                     }
                 };
                 let addr = ip.parse::<SocketAddr>().unwrap();
-                self.dial(addr)
+                self.dial(addr, &alias)
             }
             _ => {}
         }
     }
 
-    fn dial(&mut self, addr: SocketAddr) {
-        if let Err(e) = self.waiting_loop(addr) {
+    fn dial(&mut self, addr: SocketAddr, name: &str) {
+        if let Err(e) = self.waiting_loop(addr, name) {
             prompt(&format!("connection was broken because: {}", e.descr));
         }
         prompt("you are in the menu now");

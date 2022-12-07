@@ -16,6 +16,11 @@ pub fn empty_prompt() {
     stdout().flush().unwrap();
 }
 
+pub fn named_prompt(name: &str, contents: &str) {
+    print!("\r[{}]: {}\n[you]: ", name, contents);
+    stdout().flush().unwrap();
+}
+
 /// Temporary function
 fn execute(cmd: Command) -> Result<(), Error> {
     match cmd {
