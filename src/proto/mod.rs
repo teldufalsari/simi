@@ -99,11 +99,9 @@ pub fn recieve(stream: &mut TcpStream) -> Result<Message, Error> {
 
 /// Performs handshake and return `true` if connection has been established
 /// In future it should return session parameters (key and nonce)
-pub fn handshake_init(stream: &mut TcpStream, port: u16) -> Result<Option<CryptoContext>, Error> {
+pub fn handshake_init(stream: &mut TcpStream, port: u16, private_key: &RsaPrivateKey) -> Result<Option<CryptoContext>, Error> {
     let mut rng = thread_rng();
-    let bits = 2048;
-    let private_key = RsaPrivateKey::new(&mut rng, bits).unwrap();
-    let public_key = RsaPublicKey::from(&private_key);
+    let public_key = RsaPublicKey::from(private_key);
     let padding = PaddingScheme::new_pkcs1v15_encrypt();
 
     debug_prompt("initializing handshake...");
@@ -117,7 +115,7 @@ pub fn handshake_init(stream: &mut TcpStream, port: u16) -> Result<Option<Crypto
         let padding = PaddingScheme::new_pkcs1v15_encrypt();
         let confirm_data = 
             accept_data.pkey.encrypt(&mut rng, padding, &r_key.serialize().unwrap()).unwrap();
-    
+
         debug_prompt("accepted - sending confirmation");
         send(stream, Message::new_confirm(port, confirm_data))?;
         let ctx = CryptoContext {

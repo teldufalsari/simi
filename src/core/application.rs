@@ -95,7 +95,7 @@ impl Application {
             .map_err(|e| Error::new(ErrCode::Network, e.to_string()))?;
         stream.set_write_timeout(Some(ten_sec)).unwrap();
         stream.set_read_timeout(Some(ten_sec)).unwrap();
-        if let Some(ctx) = handshake_init(&mut stream, self.cfg.port)? {
+        if let Some(ctx) = handshake_init(&mut stream, self.cfg.port, &self.private_key)? {
             // On success - wait until this connection is closed
             let cause = self.connected_loop(desired_addr, name, ctx)?;
             if cause == CloseCaused::Locally {
