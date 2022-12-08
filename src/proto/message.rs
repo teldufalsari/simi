@@ -37,7 +37,7 @@ pub struct AcceptPayload {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RandAndKey {
     pub nonce: u64,
-    pub session_key: u64,
+    pub session_key: Vec<u8>,
 }
 
 
@@ -75,6 +75,10 @@ impl Message {
     /// Creates an empty request message
     pub fn new_speak_plain(port: u16, payload: Vec<u8>) -> Self {
         Self { t: Type::SpeakPlain, port, data: Some(payload) }
+    }
+
+    pub fn new_speak(port: u16, payload: Vec<u8>) -> Self {
+        Self {t: Type::Speak, port, data: Some(payload)}
     }
 
     /// Creates an empty request message

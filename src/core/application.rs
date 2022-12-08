@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::cli::{menu, dialogue, Command};
 use crate::error::{Error, ErrCode, convert_err};
 use crate::proto::message::{Type, Message};
-use crate::proto::{handshake_init, decline, recieve, accept_or_decline, send};
+use crate::proto::{handshake_init, decline, recieve, accept_or_decline, send, send_secret, decrypt_secret};
 use crate::proto::CryptoContext;
 use super::{prompt, empty_prompt, named_prompt, debug_prompt};
 
@@ -157,7 +157,7 @@ impl Application {
                         send(&mut stream, Message::new_close(self.cfg.port, ctx.nonce))?;
                         return Ok(CloseCaused::Locally)
                     }
-                    Ok(cmd) => self.dialogue_execute(cmd, &address)?
+                    Ok(cmd) => self.dialogue_execute(cmd, &address, &ctx)?
                 }
                 buffer.clear();
             }
@@ -220,7 +220,7 @@ impl Application {
         }
     }
 
-    fn dialogue_execute(&mut self, cmd: Command, addr: &SocketAddr) -> Result<(), Error> {
+    fn dialogue_execute(&mut self, cmd: Command, addr: &SocketAddr, ctx: &CryptoContext) -> Result<(), Error> {
         match cmd {
             Command::SpeakPlain(text) => {
                 let mut stream = TcpStream::connect(addr)
@@ -228,7 +228,15 @@ impl Application {
                 send(&mut stream, Message::new_speak_plain(self.cfg.port, text.into_bytes()))?;
                 empty_prompt();
             }
-            Command::Secret(path) => debug_prompt(&format!(" secret {:?} not implemented", path)),
+            Command::Secret(path) => {
+                let mut buf = String::new();
+                prompt("enter secret message:");
+                stdin().read_line(&mut buf).unwrap();
+                let mut stream = TcpStream::connect(addr)
+                    .map_err(|e| convert_err(e, ErrCode::Network))?;
+                send_secret(&mut stream, self.cfg.port, &buf, path, &ctx.session_key)?;
+                empty_prompt();
+            }
             _ => {}
         }
         Ok(())
@@ -249,6 +257,10 @@ impl Application {
         prompt("you are in the menu now");
     }
 
+    /// Handle incoming TCP connection when connected to some peer.
+    /// 
+    /// Returns `true` if the peer sends a valid `close` message
+    /// with matching nonce.
     fn handle_incoming_connection(&self,
         mut connection: (TcpStream, SocketAddr),
         address: &SocketAddr,
@@ -280,6 +292,13 @@ impl Application {
                         named_prompt(name, &text);
                     } else {
                         named_prompt(name, "<empty message>");
+                    }
+                }
+                Type::Speak => {
+                    if let Some(data) = msg.data {
+                        if let Ok(text) = decrypt_secret(data, &ctx.session_key) {
+                            named_prompt(name, text.trim());
+                        }
                     }
                 }
                 _ => {},

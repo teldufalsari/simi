@@ -3,6 +3,10 @@ use std::net::TcpStream;
 
 use rand::{thread_rng, Rng};
 use rsa::{PublicKey, RsaPrivateKey, RsaPublicKey, PaddingScheme};
+use aes_gcm::{
+    aead::{KeyInit, Key, Aead},
+    aes::Aes128, Aes128Gcm, Nonce
+};
 
 use crate::error::{Error, ErrCode, convert_err};
 use crate::core::debug_prompt;
@@ -15,7 +19,7 @@ use self::message::RequestPayload;
 #[derive(Debug)]
 pub struct CryptoContext {
     pub peer_public_key: RsaPublicKey,
-    pub session_key: u64,
+    pub session_key: Key<Aes128>,
     pub nonce: u64,
 }
 
@@ -27,6 +31,29 @@ pub fn send(stream: &mut TcpStream, message: Message) -> Result<(), Error> {
         .as_slice()
     ).map_err(|e| convert_err(e, ErrCode::Network))
 }
+
+
+pub fn send_secret(stream: &mut TcpStream, port: u16, text: &str, path: Option<String>, key: &Key<Aes128>) -> Result<(), Error> {
+    let mut rng = rand::thread_rng();
+    let mut raw_nonce = [0u8; 12];
+    rng.fill(&mut raw_nonce);
+    let nonce = Nonce::from_slice(&raw_nonce[..12]);
+    let cipher = Aes128Gcm::new(key);
+    let mut ciphertext = cipher.encrypt(nonce, text.as_ref()).unwrap();
+    let mut payload = nonce.to_vec();
+    payload.append(&mut ciphertext);
+    send(stream, Message::new_speak(port, payload))?;
+    Ok(())
+}
+
+pub fn decrypt_secret(secret: Vec<u8>, key: &Key<Aes128>) -> Result<String, Error> {
+    let cipher = Aes128Gcm::new(key);
+    let nonce = Nonce::from_slice(&secret[..12]);
+    let raw_text = cipher.decrypt(nonce, &secret[12..])
+        .map_err(|e| convert_err(e, ErrCode::Serial))?;
+    String::from_utf8(raw_text).map_err(|e| convert_err(e, ErrCode::Serial))
+}
+
 
 /// Read a message from the stream (if any)
 pub fn recieve(stream: &mut TcpStream) -> Result<Message, Error> {
@@ -58,7 +85,7 @@ pub fn handshake_init(stream: &mut TcpStream, port: u16) -> Result<Option<Crypto
         send(stream, Message::new_confirm(port, confirm_data))?;
         let ctx = CryptoContext {
             peer_public_key: accept_data.pkey,
-            session_key: r_key.session_key,
+            session_key: *Key::<Aes128>::from_slice(&r_key.session_key),
             nonce: r_key.nonce,
         };
         debug_prompt(&format!("Context: {:?}", ctx));
@@ -99,13 +126,13 @@ pub fn accept_or_decline(
             let public_key = RsaPublicKey::from(private_key);
             let padding = PaddingScheme::new_pkcs1v15_encrypt();
             let nonce = rng.gen::<u64>();
-            let session_key = rng.gen::<u64>();
+            let session_key = Aes128Gcm::generate_key(&mut rng);
             let peer_public_key = 
                 RequestPayload::deserialize(&request.data.unwrap()).unwrap().pkey;
             let rand_and_key = peer_public_key.encrypt(
                 &mut rng,
                 padding,
-                &RandAndKey {nonce, session_key}.serialize().unwrap())
+                &RandAndKey {nonce, session_key: session_key.to_vec()}.serialize().unwrap())
                 .unwrap();
             send(&mut connection.0, Message::new_accept(port, public_key, rand_and_key))?;
             let response = recieve(&mut connection.0)?;
@@ -115,7 +142,9 @@ pub fn accept_or_decline(
                 let padding = PaddingScheme::new_pkcs1v15_encrypt();
                 let rand_and_key_check = 
                     RandAndKey::from_ciphertext(&private_key, padding, &response.data.unwrap())?;
-                if rand_and_key_check.nonce != nonce && rand_and_key_check.session_key != session_key {
+
+                if rand_and_key_check.nonce != nonce
+                    && rand_and_key_check.session_key.as_slice() != session_key.as_slice() {
                     return Err(Error::new(ErrCode::Network, "ill-formed request".to_owned()));
                 }
                 let ctx = CryptoContext {
