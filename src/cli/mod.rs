@@ -12,4 +12,5 @@ pub enum Command {
     DialAlias(String),
     Secret(Option<String>),
     SpeakPlain(String),
+    Debug,
 }

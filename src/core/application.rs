@@ -11,13 +11,20 @@ use rsa::RsaPrivateKey;
 use rand::thread_rng;
 
 
-use crate::config::Config;
+use crate::config::{Config, canonicalize_home};
 use crate::cli::{menu, dialogue, Command};
 use crate::error::{Error, ErrCode, convert_err};
 use crate::proto::message::{Type, Message};
-use crate::proto::{handshake_init, decline, recieve, accept_or_decline, send, send_secret, decrypt_secret};
+use crate::proto::{
+    handshake_init, decline, recieve,
+    accept_or_decline, send, 
+    send_secret, decrypt_secret
+};
 use crate::proto::CryptoContext;
-use super::{prompt, empty_prompt, named_prompt, debug_prompt};
+use super::{
+    prompt, empty_prompt, named_prompt, 
+    debug_prompt, secret_prompt, toggle_debug
+};
 
 pub struct Application {
     cfg: Config,
@@ -216,26 +223,44 @@ impl Application {
                 let addr = ip.parse::<SocketAddr>().unwrap();
                 self.dial(addr, &alias)
             }
+            Command::Debug => {
+                toggle_debug();
+                empty_prompt();
+            }
             _ => {}
         }
     }
 
-    fn dialogue_execute(&mut self, cmd: Command, addr: &SocketAddr, ctx: &CryptoContext) -> Result<(), Error> {
+    fn dialogue_execute(
+        &mut self,
+        cmd: Command,
+        addr: &SocketAddr,
+        ctx: &CryptoContext
+    ) -> Result<(), Error> {
         match cmd {
             Command::SpeakPlain(text) => {
-                let mut stream = TcpStream::connect(addr)
+                let mut stream = TcpStream::connect_timeout(addr, Duration::from_secs(10))
                     .map_err(|e| convert_err(e, ErrCode::Network))?;
                 send(&mut stream, Message::new_speak_plain(self.cfg.port, text.into_bytes()))?;
                 empty_prompt();
             }
-            Command::Secret(path) => {
+            Command::Secret(s) => {
                 let mut buf = String::new();
                 prompt("enter secret message:");
                 stdin().read_line(&mut buf).unwrap();
-                let mut stream = TcpStream::connect(addr)
+                let mut stream = TcpStream::connect_timeout(addr, Duration::from_secs(10))
                     .map_err(|e| convert_err(e, ErrCode::Network))?;
-                send_secret(&mut stream, self.cfg.port, &buf, path, &ctx.session_key)?;
-                empty_prompt();
+
+                let path = if let Some(path) = s {
+                    canonicalize_home(&path).unwrap()
+                } else {
+                    canonicalize_home(&self.cfg.assets).unwrap()
+                };
+                if let Err(e) = send_secret(&mut stream, self.cfg.port, &buf, path, &ctx.session_key) {
+                    prompt(&e.descr);
+                } else {
+                    empty_prompt();
+                }
             }
             _ => {}
         }
@@ -297,7 +322,7 @@ impl Application {
                 Type::Speak => {
                     if let Some(data) = msg.data {
                         if let Ok(text) = decrypt_secret(data, &ctx.session_key) {
-                            named_prompt(name, text.trim());
+                            secret_prompt(name, text.trim());
                         }
                     }
                 }
