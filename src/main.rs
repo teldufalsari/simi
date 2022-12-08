@@ -1,43 +1,40 @@
 #![warn(clippy::all, clippy::pedantic)]
 #![allow(dead_code)]
 
-use std::io::{BufRead, Write};
+use std::process;
+use colored::Colorize;
 
 mod cli;
 mod error;
 mod config;
+mod core;
+mod proto;
 
-use cli::{Command, interpret};
-use config::Config;
+use crate::config::Config;
+use crate::core::application::Application;
+use crate::core::prompt;
 
-// This is a simple driver for CLI testing
 fn main() {
     let config = match Config::load() {
         Ok(val) => val,
         Err(e) => {
-            println!("<simi>: can't read conf.toml\n<simi>: because: {}\n<simi>: falling back to defaults", e);
+            prompt("can't read conf.toml");
+            prompt(&format!("because: {}", e.red()));
+            prompt(&"falling back to defaults".yellow());
             Config::default()
         }
     };
-    println!("<simi>: using following configuration: {:?}", config);
-    let stdin = std::io::stdin();
-    let mut str_buf = String::new();
-    print!("<simi>: Print yor commans for evaluation:\n[you]: ");
-    std::io::stdout().flush().unwrap();
-    loop {
-        stdin.lock().read_line(&mut str_buf).unwrap();
-        match interpret(str_buf.trim()) {
-            Err(e) => {
-                print!("<simi>: {}\n[you]: ", e.descr);
-                std::io::stdout().flush().unwrap();
-            }
-            Ok(Command::Exit) => break,
-            Ok(cmd) => {
-                print!("<simi>: {:?}\n[you]: ", cmd);
-                std::io::stdout().flush().unwrap();
-            }
+    prompt("initializing RSA keys...");
+    let mut app = match Application::initialize(config) {
+        Ok(val) => val,
+        Err(e) => {
+            prompt(&format!("fatal error: {}", e.descr.red()));
+            process::exit(1);
         }
-        str_buf.clear();
+    };
+    if let Err(e) = app.run() {
+        prompt(&format!("fatal error: {}", e.descr.red()));
+        process::exit(1);
     }
-    println!("<simi>: exiting...");
+    println!("{}: exiting...", "<simi>".yellow());
 }
