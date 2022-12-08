@@ -16,6 +16,7 @@ pub fn interpret(line: &str) -> Result<Command, Error> {
         Some("remove") => remove(args),
         Some("dial") => dial(args),
         Some("save") => save(args),
+        Some("debug") => debug(args),
         Some(cmd) => Err(Error::new(ErrCode::UnknownCommand, format!("unknown command \"{}\"", cmd))),
         None => Err(Error::new(ErrCode::EmptyLine, String::new()))
     }
@@ -72,5 +73,13 @@ fn save(mut args: Split<&str>) -> Result<Command, Error> {
         Err(Error::new(ErrCode::WrongArgs, "usage: save".to_owned()))
     } else {
         Ok(Command::Save)
+    }
+}
+
+fn debug(mut args: Split<&str>) -> Result<Command, Error> {
+    if args.next().is_some() {
+        Err(Error::new(ErrCode::WrongArgs, "usage: debug".to_owned()))
+    } else {
+        Ok(Command::Debug)
     }
 }
