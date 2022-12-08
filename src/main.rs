@@ -24,15 +24,16 @@ fn main() {
             Config::default()
         }
     };
+    prompt("initializing RSA keys...");
     let mut app = match Application::initialize(config) {
         Ok(val) => val,
         Err(e) => {
-            prompt(&format!("<simi> Fatal error: {}", e.descr.red()));
+            prompt(&format!("fatal error: {}", e.descr.red()));
             process::exit(1);
         }
     };
     if let Err(e) = app.run() {
-        prompt(&format!("<simi> Fatal error: {}", e.descr.red()));
+        prompt(&format!("fatal error: {}", e.descr.red()));
         process::exit(1);
     }
     println!("{}: exiting...", "<simi>".yellow());

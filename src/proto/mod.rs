@@ -1,11 +1,23 @@
 use std::{io::Write, net::SocketAddr};
 use std::net::TcpStream;
 
+use rand::{thread_rng, Rng};
+use rsa::{PublicKey, RsaPrivateKey, RsaPublicKey, PaddingScheme};
+
 use crate::error::{Error, ErrCode, convert_err};
 use crate::core::debug_prompt;
 
 pub mod message;
-use message::{Message, Type};
+use message::{Message, Type, AcceptPayload, RandAndKey};
+
+use self::message::RequestPayload;
+
+#[derive(Debug)]
+pub struct CryptoContext {
+    pub peer_public_key: RsaPublicKey,
+    pub session_key: u64,
+    pub nonce: u64,
+}
 
 /// Write specified message into the stream
 pub fn send(stream: &mut TcpStream, message: Message) -> Result<(), Error> {
@@ -23,18 +35,37 @@ pub fn recieve(stream: &mut TcpStream) -> Result<Message, Error> {
 
 /// Performs handshake and return `true` if connection has been established
 /// In future it should return session parameters (key and nonce)
-pub fn handshake_init(stream: &mut TcpStream, port: u16) -> Result<bool, Error> {
+pub fn handshake_init(stream: &mut TcpStream, port: u16) -> Result<Option<CryptoContext>, Error> {
+    let mut rng = thread_rng();
+    let bits = 2048;
+    let private_key = RsaPrivateKey::new(&mut rng, bits).unwrap();
+    let public_key = RsaPublicKey::from(&private_key);
+    let padding = PaddingScheme::new_pkcs1v15_encrypt();
+
     debug_prompt("initializing handshake...");
-    send(stream, Message::new_request(port))?;
+    send(stream, Message::new_request(port, public_key))?;
     debug_prompt("reading response");
     let reply = Message::deserialize(stream)?;
-    if reply.t == Type::Accept {
+    if reply.t == Type::Accept && reply.data.is_some() {
+        let accept_data = AcceptPayload::deserialize(&reply.data.unwrap())?;
+        let r_key = 
+            RandAndKey::from_ciphertext(&private_key, padding, &accept_data.enc)?;
+        let padding = PaddingScheme::new_pkcs1v15_encrypt();
+        let confirm_data = 
+            accept_data.pkey.encrypt(&mut rng, padding, &r_key.serialize().unwrap()).unwrap();
+    
         debug_prompt("accepted - sending confirmation");
-        send(stream, Message::new_confirm(port))?;
-        Ok(true)
+        send(stream, Message::new_confirm(port, confirm_data))?;
+        let ctx = CryptoContext {
+            peer_public_key: accept_data.pkey,
+            session_key: r_key.session_key,
+            nonce: r_key.nonce,
+        };
+        debug_prompt(&format!("Context: {:?}", ctx));
+        Ok(Some(ctx))
     } else {
         debug_prompt("negative response. returning");
-        Ok(false)
+        Ok(None)
     }
 }
 
@@ -55,28 +86,54 @@ pub fn decline(mut stream: TcpStream, port: u16) {
 /// 
 /// Returns `true` if the request was accepted, `false` otherwise.
 pub fn accept_or_decline(
+    private_key: &RsaPrivateKey,
     mut connection: (TcpStream, SocketAddr),
     port: u16,
     desired: &SocketAddr
-) -> Result<bool, Error> {
-    let msg = recieve(&mut connection.0);
-    if let Ok(request) = msg {
-        if request.t == Type::Request {
-            if request.port == desired.port() {
-                debug_prompt(&format!("incoming connection from {} - accepting", desired));
-                send(&mut connection.0, Message::new_accept(port))?;
-                let response = recieve(&mut connection.0)?;
+) -> Result<Option<CryptoContext>, Error> {
+    let request = recieve(&mut connection.0)?;
+    if request.t == Type::Request && request.data.is_some() {
+        if request.port == desired.port() {
+            debug_prompt(&format!("incoming connection from {} - accepting", desired));
+            let mut rng = thread_rng();
+            let public_key = RsaPublicKey::from(private_key);
+            let padding = PaddingScheme::new_pkcs1v15_encrypt();
+            let nonce = rng.gen::<u64>();
+            let session_key = rng.gen::<u64>();
+            let peer_public_key = 
+                RequestPayload::deserialize(&request.data.unwrap()).unwrap().pkey;
+            let rand_and_key = peer_public_key.encrypt(
+                &mut rng,
+                padding,
+                &RandAndKey {nonce, session_key}.serialize().unwrap())
+                .unwrap();
+            send(&mut connection.0, Message::new_accept(port, public_key, rand_and_key))?;
+            let response = recieve(&mut connection.0)?;
+            if response.t == Type::Confirm && response.data.is_some() {
                 debug_prompt("acception confirmed");
-                Ok(if response.t == Type::Confirm {true} else {false})
+                // check
+                let padding = PaddingScheme::new_pkcs1v15_encrypt();
+                let rand_and_key_check = 
+                    RandAndKey::from_ciphertext(&private_key, padding, &response.data.unwrap())?;
+                if rand_and_key_check.nonce != nonce && rand_and_key_check.session_key != session_key {
+                    return Err(Error::new(ErrCode::Network, "ill-formed request".to_owned()));
+                }
+                let ctx = CryptoContext {
+                    peer_public_key,
+                    session_key,
+                    nonce,
+                };
+                debug_prompt(&format!("Context: {:?}", ctx));
+                Ok(Some(ctx))
             } else {
-                debug_prompt(&format!("incoming connection from {}:{} - declining", connection.1.ip(), request.port));
-                send(&mut connection.0, Message::new_deny(port))?;
-                Ok(false)
+                Err(Error::new(ErrCode::Network, "ill-formed request".to_owned()))
             }
         } else {
-            Ok(false)
+            debug_prompt(&format!("incoming connection from {}:{} - declining", connection.1.ip(), request.port));
+            send(&mut connection.0, Message::new_deny(port))?;
+            Ok(None)
         }
     } else {
-        Ok(false)
+        Err(Error::new(ErrCode::Network, "ill-formed request".to_owned()))
     }
 }

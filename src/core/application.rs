@@ -3,15 +3,20 @@ use std::os::unix::prelude::{AsFd, AsRawFd};
 use std::io::stdin;
 use std::time::Duration;
 
+use bincode::Options;
 use nix::libc::STDIN_FILENO;
 use nix::poll::{PollFd, PollFlags, poll};
 use nix::errno::Errno;
+use rsa::RsaPrivateKey;
+use rand::thread_rng;
+
 
 use crate::config::Config;
 use crate::cli::{menu, dialogue, Command};
 use crate::error::{Error, ErrCode, convert_err};
 use crate::proto::message::{Type, Message};
 use crate::proto::{handshake_init, decline, recieve, accept_or_decline, send};
+use crate::proto::CryptoContext;
 use super::{prompt, empty_prompt, named_prompt, debug_prompt};
 
 pub struct Application {
@@ -19,6 +24,7 @@ pub struct Application {
     addr: SocketAddr,
     listener: TcpListener,
     watches: [PollFd; 2],
+    private_key: RsaPrivateKey,
 }
 
 #[derive(PartialEq)]
@@ -36,7 +42,12 @@ impl Application {
         let watches = [
             PollFd::new(STDIN_FILENO, PollFlags::POLLIN),
             PollFd::new(listener_fd, PollFlags::POLLIN)];
-        Ok(Self { cfg, addr, listener, watches})
+        
+        let bits = 2048;
+        let mut rng = thread_rng();
+        let private_key = RsaPrivateKey::new(&mut rng, bits).unwrap();
+
+        Ok(Self { cfg, addr, listener, watches, private_key})
     }
 
     pub fn run(&mut self) -> Result<(), Error> {
@@ -77,9 +88,9 @@ impl Application {
             .map_err(|e| Error::new(ErrCode::Network, e.to_string()))?;
         stream.set_write_timeout(Some(ten_sec)).unwrap();
         stream.set_read_timeout(Some(ten_sec)).unwrap();
-        if true == handshake_init(&mut stream, self.cfg.port)? {
+        if let Some(ctx) = handshake_init(&mut stream, self.cfg.port)? {
             // On success - wait until this connection is closed
-            let cause = self.connected_loop(desired_addr, name)?;
+            let cause = self.connected_loop(desired_addr, name, ctx)?;
             if cause == CloseCaused::Locally {
                 // if it was closed by the local user - return to the idle loop,
                 // otherwise go to the wait loop
@@ -110,22 +121,22 @@ impl Application {
                 // TCP connection recieved, decide on it
                 let connection = self.listener.accept()
                     .map_err(|e| convert_err(e, ErrCode::Fatal))?;
-                match accept_or_decline(connection, self.cfg.port, &desired_addr) {
-                    Ok(true) => {
-                        let cause = self.connected_loop(desired_addr, name)?;
+                match accept_or_decline(&self.private_key, connection, self.cfg.port, &desired_addr) {
+                    Ok(Some(ctx)) => {
+                        let cause = self.connected_loop(desired_addr, name, ctx)?;
                         if cause == CloseCaused::Locally {
                             return Ok(());
                         }
                     }
-                    Ok(false) => continue,
-                    Err(e) => return Err(e),
+                    Ok(None) | Err(_) => continue,
+                    // Err(e) => return Err(e),
                 }
             }
         }
         Ok(())
     }
 
-    fn connected_loop(&mut self, address: SocketAddr, name: &str) -> Result<CloseCaused, Error> {
+    fn connected_loop(&mut self, address: SocketAddr, name: &str, ctx: CryptoContext) -> Result<CloseCaused, Error> {
         prompt("connected to the peer");
         let mut buffer = String::new();
         loop {
@@ -143,7 +154,7 @@ impl Application {
                     Ok(Command::Exit) => {
                         let mut stream = TcpStream::connect(address)
                             .map_err(|e| convert_err(e, ErrCode::Network))?;
-                        send(&mut stream, Message::new_close(self.cfg.port))?;
+                        send(&mut stream, Message::new_close(self.cfg.port, ctx.nonce))?;
                         return Ok(CloseCaused::Locally)
                     }
                     Ok(cmd) => self.dialogue_execute(cmd, &address)?
@@ -153,7 +164,7 @@ impl Application {
             if self.watches[1].revents().unwrap_or(PollFlags::empty()).contains(PollFlags::POLLIN) {
                 let connection = self.listener.accept()
                     .map_err(|e| convert_err(e, ErrCode::Fatal))?;
-                    if let Ok(true) = self.handle_incoming_connection(connection, &address, name) {
+                    if let Ok(true) = self.handle_incoming_connection(connection, &address, name, &ctx) {
                         return Ok(CloseCaused::ByRemote);
                     }
             }
@@ -241,15 +252,26 @@ impl Application {
     fn handle_incoming_connection(&self,
         mut connection: (TcpStream, SocketAddr),
         address: &SocketAddr,
-        name: &str
+        name: &str,
+        ctx: &CryptoContext
     ) -> Result<bool, Error> {
         let msg = recieve(&mut connection.0)?;
         debug_prompt(&format!("I recieved [{:?}]", msg));
         if connection.1.ip() == address.ip() && msg.port == address.port() {
             match msg.t {
+                // something ugly, pls help
                 Type::Close => {
-                    prompt("your peer disconnected. Wait for them or leave");
-                    return Ok(true)
+                    if let Some(data) = msg.data {
+                        let raw_nonce = bincode::DefaultOptions::new()
+                            .with_little_endian()
+                            .deserialize::<u64>(&data);
+                        if let Ok(nonce) = raw_nonce {
+                            if nonce == ctx.nonce {
+                                prompt("your peer disconnected. Wait for them or leave");
+                                return Ok(true)
+                            }
+                        }
+                    }
                 },
                 Type::SpeakPlain => {
                     if let Some(data) = msg.data {
